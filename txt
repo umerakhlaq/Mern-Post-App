@@ -1,0 +1,13 @@
+strong typing 
+Type interface
+union type
+type alias
+interface
+type interface
+module  system
+nested object 
+extend interface
+optional properties
+any, unknown, never types
+
+step:6

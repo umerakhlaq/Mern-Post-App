@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dark-bg: #000000;
+  --color-dark-card: #121212;
+  --color-accent: #ff0050; /* TikTok red-ish accent */
+}
+
+@layer base {
+  body {
+    @apply bg-black text-white font-sans antialiased;
+    overflow-x: hidden;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .glass {
+    @apply bg-white/10 backdrop-blur-md border border-white/10;
+  }
+}
