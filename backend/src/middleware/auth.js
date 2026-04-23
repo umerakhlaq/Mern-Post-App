@@ -13,6 +13,14 @@ const auth = async (req, res, next) => {
         const user = await User.findById(decoded.id).select("-password");
         if (!user) return res.status(404).send("User not found");
 
+        if (user.isSuspended) {
+            return res.status(403).json({ message: "Your account has been suspended by the admin." });
+        }
+
+        if (user.isFrozen && req.method !== 'GET' && !req.originalUrl.includes('/logout')) {
+            return res.status(403).json({ message: "Your account is temporarily frozen. Please contact support." });
+        }
+
         req.user = user;
         next();
     } catch (error) {
@@ -20,4 +28,12 @@ const auth = async (req, res, next) => {
     }
 };
 
-module.exports = { auth };
+const adminAuth = (req, res, next) => {
+    if (req.user && req.user.role === "admin") {
+        next();
+    } else {
+        res.status(403).json({ message: "Forbidden - Admin access required" });
+    }
+};
+
+module.exports = { auth, adminAuth };

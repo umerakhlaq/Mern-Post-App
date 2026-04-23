@@ -34,6 +34,22 @@ const postSchema = new Schema({
     comments: {
         type: [Schema.Types.ObjectId],
         ref: "Comment"
+    },
+    isPinned: {
+        type: Boolean,
+        default: false
+    },
+    isTrending: {
+        type: Boolean,
+        default: false
+    },
+    reportCount: {
+        type: Number,
+        default: 0
+    },
+    isHidden: {
+        type: Boolean,
+        default: false
     }
 
 }, {

@@ -1,19 +1,31 @@
-import { Heart, MessageCircle, Share2, MoreHorizontal, Edit, Trash2 } from "lucide-react";
-import { motion } from "framer-motion";
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import EditPostModal from "./EditPostModal";
-import CommentsModal from "./CommentsModal";
-import { BASE_URL } from "../utils/constants";
-import Swal from 'sweetalert2';
-import toast from 'react-hot-toast';
 
-// Helper to format time
+import { Heart, MessageCircle, Share2, MoreHorizontal, Trash2, Edit, Bookmark, Flag } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { useMetricsUpdate } from "../hooks/useMetricsUpdate";
+import { BASE_URL } from "../utils/constants";
+import toast from "react-hot-toast";
+import Swal from 'sweetalert2';
+import EditPostModal from "./EditPostModal";
+import ReportModal from "./ReportModal";
+import { motion, AnimatePresence } from "framer-motion";
+
+const swalVibe = Swal.mixin({
+    background: '#09090b',
+    color: '#fff',
+    confirmButtonColor: '#8B5CF6',
+    cancelButtonColor: '#18181b',
+    customClass: {
+        popup: 'border border-white/5 rounded-3xl backdrop-blur-3xl',
+        confirmButton: 'btn-primary px-8 py-3 rounded-2xl font-black text-sm uppercase tracking-widest',
+        cancelButton: 'px-8 py-3 rounded-2xl font-bold bg-zinc-800 text-sm'
+    }
+});
+
 const timeAgo = (date) => {
     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
     let interval = seconds / 31536000;
-
     if (interval > 1) return Math.floor(interval) + "y";
     interval = seconds / 2592000;
     if (interval > 1) return Math.floor(interval) + "mo";
@@ -25,53 +37,81 @@ const timeAgo = (date) => {
     if (interval > 1) return Math.floor(interval) + "m";
     return "now";
 };
+ 
+const isVideo = (url) => {
+    if (!url) return false;
+    const videoExtensions = [".mp4", ".webm", ".ogg", ".mov", ".m4v"];
+    const isVideoExtension = videoExtensions.some(ext => url.toLowerCase().includes(ext));
+    const isCloudinaryVideo = url.includes("/video/upload/");
+    return isVideoExtension || isCloudinaryVideo;
+};
 
-export default function PostCard({ post }) {
+export default function PostCard({ post, onDelete, onUpdate }) {
     const { user } = useAuth();
-    const [showMenu, setShowMenu] = useState(false);
+    const navigate = useNavigate();
     const [isEditOpen, setIsEditOpen] = useState(false);
-    const [isCommentsOpen, setIsCommentsOpen] = useState(false);
+    const [isReportOpen, setIsReportOpen] = useState(false);
+    const [likes, setLikes] = useState(post.likes || []);
+    const [commentCount, setCommentCount] = useState(post.comments?.length || 0);
+    const [isLiked, setIsLiked] = useState(false);
+    const [showMenu, setShowMenu] = useState(false);
     const [deleted, setDeleted] = useState(false);
-    const [postData, setPostData] = useState(post);
 
-    const isOwner = user?._id && postData?.user?._id && String(user._id) === String(postData.user._id);
+    const isOwner = user?._id && post?.user?._id && String(user._id) === String(post.user._id);
 
-    // Like Logic
-    const [likes, setLikes] = useState(postData.likes || []);
-    const isLiked = user && likes.includes(user._id);
+    // Listen for real-time metric updates
+    useMetricsUpdate((data) => {
+        if (data.type === 'post-like-count' && data.postId === post._id) {
+            setLikes(Array(data.likesCount).fill(null));
+        } else if (data.type === 'post-comment-count' && data.postId === post._id) {
+            setCommentCount(data.commentsCount);
+        }
+    });
 
-    const handleLike = async () => {
-        if (!user) return toast.error("Please login to like");
+    useEffect(() => {
+        if (post.likes) {
+            setLikes(post.likes);
+            if (user && post.likes.includes(user._id)) {
+                setIsLiked(true);
+            }
+        }
+    }, [post.likes, user]);
 
-        // Optimistic UI update
-        const newLikes = isLiked
-            ? likes.filter(id => id !== user._id)
-            : [...likes, user._id];
-        setLikes(newLikes);
+    const handleLike = async (e) => {
+        e.stopPropagation();
+        if (!user) return toast.error("Log in to like this post");
+
+        const newLiked = !isLiked;
+        setIsLiked(newLiked);
+        setLikes(prev => newLiked ? [...prev, user._id] : prev.filter(id => id !== user._id));
 
         try {
-            await fetch(`${BASE_URL}/post/${postData._id}/like`, {
+            const res = await fetch(`${BASE_URL}/post/${post._id}/like`, {
                 method: "POST",
+                headers: { 'Content-Type': 'application/json' },
                 credentials: "include"
             });
+            if (!res.ok) {
+                const data = await res.json();
+                setIsLiked(!newLiked);
+                setLikes(likes);
+                toast.error(data.message || "Failed to like post");
+            }
         } catch (error) {
-            // Revert on error
+            setIsLiked(!newLiked);
             setLikes(likes);
-            toast.error("Like failed");
+            toast.error("Network error");
         }
     };
 
-    const deletePost = async () => {
-        const result = await Swal.fire({
-            title: 'Are you sure?',
-            text: "You won't be able to revert this!",
+    const deletePost = async (e) => {
+        if (e) e.stopPropagation();
+        const result = await swalVibe.fire({
+            title: 'Delete this post?',
+            text: "This post will be deleted forever.",
             icon: 'warning',
-            background: '#18181B',
-            color: '#fff',
             showCancelButton: true,
-            confirmButtonColor: '#ff0050',
-            cancelButtonColor: '#333',
-            confirmButtonText: 'Yes, delete it!'
+            confirmButtonText: 'Delete Forever'
         });
 
         if (!result.isConfirmed) return;
@@ -83,159 +123,181 @@ export default function PostCard({ post }) {
             });
             if (res.ok) {
                 setDeleted(true);
-                Swal.fire({
-                    title: 'Deleted!',
-                    text: 'Your post has been deleted.',
-                    icon: 'success',
-                    background: '#18181B',
-                    color: '#fff',
-                    confirmButtonColor: '#ff0050'
-                });
-            } else {
-                toast.error("Failed to delete");
+                if (onDelete) onDelete(post._id);
             }
         } catch (err) {
-            toast.error("Error deleting");
+            toast.error("Failed to delete post");
         }
+    };
+
+    const handleShare = (e) => {
+        e.stopPropagation();
+        const link = `${window.location.origin}/post/${post._id}`;
+        navigator.clipboard.writeText(link);
+        toast.success("Link copied!");
     };
 
     if (deleted) return null;
 
-    const handleShare = (postId) => {
-        const link = `${window.location.origin}/post/${postId}`;
-
-        if (navigator.share) {
-            navigator.share({ title: "Check this post", url: link });
-        } else {
-            navigator.clipboard.writeText(link);
-            toast.success("Link copied to clipboard!");
-        }
-    };
+    const profileLink = post.user?._id ? `/user/${post.user._id}` : "#";
 
     return (
         <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-50px" }}
-            transition={{ duration: 0.4, ease: "easeOut" }}
-            className="w-full max-w-xl mx-auto bg-[#18181B] rounded-3xl overflow-hidden mb-6 border border-white/5 shadow-xl group hover:border-white/10 transition-colors"
+            layout
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="p-4 sm:p-5 border-b border-white/5 hover:bg-white/[0.02] cursor-pointer transition-all duration-300 relative group"
+            onClick={() => navigate(`/post/${post._id}`)}
         >
-            {/* Header: User Info & Options */}
-            <div className="flex items-center justify-between px-5 py-4">
-                <span className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full p-[2px] bg-gradient-to-tr from-accent to-orange-400 cursor-pointer hover:scale-105 transition-transform duration-300 shadow-lg">
+            <div className="flex gap-4">
+                {/* Profile Pic with Glow */}
+                <Link to={profileLink} onClick={(e) => e.stopPropagation()} className="flex-shrink-0 relative h-fit">
+                    <div className="w-12 h-12 rounded-2xl overflow-hidden border border-white/10 shadow-xl group/prof">
                         <img
-                            src={postData.user?.photoUrl || `https://api.dicebear.com/7.x/avataaars/svg?seed=${postData.user?.name || 'User'}`}
-                            alt="avatar"
-                            className="w-full h-full rounded-full border-2 border-[#18181B] object-cover bg-white"
+                            src={post.user?.photoUrl || `https://ui-avatars.com/api/?name=${post.user?.name || 'User'}&background=6366f1&color=fff&bold=true`}
+                            alt={post.user?.name}
+                            className="w-full h-full object-cover transition-transform group-hover/prof:scale-110"
                         />
                     </div>
-                    <div className="flex flex-col justify-center leading-tight">
-                        <div className="flex items-center gap-2">
-                            <Link to={`/user/${postData.user?._id}`} className="font-semibold text-white text-[15px] hover:text-gray-200 transition-colors hover:underline cursor-pointer">
-                                {postData.user?.name}
+                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-vibe-primary rounded-full border-2 border-black flex items-center justify-center">
+                        <span className="text-[6px] font-black italic">V</span>
+                    </div>
+                </Link>
+
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            <Link to={profileLink} onClick={(e) => e.stopPropagation()} className="font-bold text-white hover:text-vibe-primary transition-colors truncate tracking-tight text-[15px]">
+                                {post.user?.name || "Anonymous"}
                             </Link>
-                            <span className="w-1 h-1 rounded-full bg-gray-500"></span>
-                            <span className="text-xs text-gray-500 font-medium">{timeAgo(postData.createdAt || new Date())}</span>
+                            <span className="text-zinc-500 text-sm truncate font-medium">@{post.user?.username || "anonymous"}</span>
+                            <span className="text-zinc-600">·</span>
+                            <span className="text-zinc-500 text-xs font-medium uppercase tracking-wider">{timeAgo(post.createdAt)}</span>
+                        </div>
+
+                        {/* ⋮ Menu — Owner sees Edit/Delete, Others see Report */}
+                        <div className="relative z-10">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+                                className="p-2 text-zinc-600 hover:text-white rounded-xl hover:bg-white/5 transition-all"
+                            >
+                                <MoreHorizontal size={18} />
+                            </button>
+                            <AnimatePresence>
+                                {showMenu && (
+                                    <>
+                                        <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowMenu(false); }} />
+                                        <motion.div
+                                            initial={{ opacity: 0, scale: 0.9, y: -10 }}
+                                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.9 }}
+                                            className="absolute right-0 top-10 w-48 glass-card p-1 z-20 border border-white/10"
+                                        >
+                                            {isOwner ? (
+                                                <>
+                                                    <button onClick={(e) => { e.stopPropagation(); setIsEditOpen(true); setShowMenu(false); }} className="w-full px-4 py-2.5 text-left text-[13px] hover:bg-white/5 rounded-xl flex items-center gap-2.5 text-zinc-300 font-bold">
+                                                        <Edit size={15} className="text-vibe-primary" /> Edit Post
+                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); deletePost(e); setShowMenu(false); }} className="w-full px-4 py-2.5 text-left text-[13px] hover:bg-red-500/10 rounded-xl flex items-center gap-2.5 text-red-400 font-bold border-t border-white/5 mt-1">
+                                                        <Trash2 size={15} /> Delete Forever
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                user && (
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setIsReportOpen(true); setShowMenu(false); }}
+                                                        className="w-full px-4 py-2.5 text-left text-[13px] hover:bg-red-500/10 rounded-xl flex items-center gap-2.5 text-red-400 font-bold"
+                                                    >
+                                                        <Flag size={15} /> Report Post
+                                                    </button>
+                                                )
+                                            )}
+                                        </motion.div>
+                                    </>
+                                )}
+                            </AnimatePresence>
                         </div>
                     </div>
-                </span>
 
-                {isOwner && (
-                    <div className="relative">
-                        <button
-                            onClick={() => setShowMenu(!showMenu)}
-                            className="text-gray-400 p-2 rounded-full hover:bg-white/5 hover:text-white transition-all"
-                        >
-                            <MoreHorizontal size={20} />
-                        </button>
-
-                        {showMenu && (
-                            <div className="absolute right-0 top-full mt-1 w-32 bg-[#27272A] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20 origin-top-right transform transition-all">
-                                <button onClick={() => { setIsEditOpen(true); setShowMenu(false); }} className="w-full px-4 py-3 text-left text-sm hover:bg-white/5 flex items-center gap-2 text-gray-200 transition-colors">
-                                    <Edit size={16} /> Edit
-                                </button>
-                                <button onClick={() => { deletePost(); setShowMenu(false); }} className="w-full px-4 py-3 text-left text-sm hover:bg-red-500/10 text-red-400 flex items-center gap-2 transition-colors">
-                                    <Trash2 size={16} /> Delete
-                                </button>
-                            </div>
-                        )}
+                    <div className="text-zinc-100 text-[16px] leading-relaxed mb-4 whitespace-pre-wrap break-words font-light">
+                        {post.content}
                     </div>
-                )}
-            </div>
 
-            {/* Post Media / Content */}
-            <div className="px-3">
-                <div className="relative w-full rounded-2xl overflow-hidden bg-black/20 group">
-                    {postData.postUrl ? (
-                        <div className="overflow-hidden rounded-2xl" onDoubleClick={handleLike}>
-                            <img
-                                src={postData.postUrl}
-                                alt="Post content"
-                                className="w-full h-auto object-cover max-h-[600px] transform group-hover:scale-[1.01] transition-transform duration-500 ease-out"
-                            />
-                        </div>
-                    ) : (
-                        <div className="p-12 text-center min-h-[300px] flex items-center justify-center bg-gradient-to-br from-[#27272A] to-[#18181B] rounded-2xl border border-white/5">
-                            <p className="text-2xl font-medium text-white/90 leading-relaxed font-serif">
-                                "{postData.content}"
-                            </p>
+                    {post.postUrl && (
+                        <div className="mb-4 rounded-3xl overflow-hidden border border-white/5 bg-zinc-900 flex justify-center group/img">
+                            {isVideo(post.postUrl) ? (
+                                <video
+                                    src={post.postUrl}
+                                    controls
+                                    muted
+                                    loop
+                                    className="w-full h-auto object-cover max-h-[500px]"
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            ) : (
+                                <img
+                                    src={post.postUrl}
+                                    alt=""
+                                    className="w-full h-auto object-cover max-h-[500px] transition-transform duration-700 group-hover/img:scale-[1.02]"
+                                    loading="lazy"
+                                />
+                            )}
                         </div>
                     )}
-                </div>
-            </div>
 
-            {/* Content & Actions */}
-            <div className="px-5 py-4">
+                    {/* Actions */}
+                    <div className="flex items-center justify-between max-w-sm mt-5">
+                        <div className="flex items-center gap-6">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); navigate(`/post/${post._id}`); }}
+                                className="flex items-center gap-2 text-zinc-500 hover:text-vibe-primary transition-all group/act"
+                            >
+                                <div className="p-2 rounded-xl group-hover/act:bg-vibe-primary/10 transition-colors">
+                                    <MessageCircle size={19} />
+                                </div>
+                                <span className="text-xs font-black">{commentCount}</span>
+                            </button>
 
-                {/* Caption */}
-                {postData.postUrl && postData.content && (
-                    <div className="mb-4">
-                        <p className="text-[15px] text-gray-300 leading-relaxed">
-                            <Link to={`/user/${postData.user?._id}`} className="font-semibold text-white mr-2 hover:underline cursor-pointer">{postData.user?.name}</Link>
-                            {postData.content}
-                        </p>
+                            <button
+                                onClick={handleLike}
+                                className={`flex items-center gap-2 transition-all group/act ${isLiked ? "text-vibe-primary" : "text-zinc-500 hover:text-vibe-primary"}`}
+                            >
+                                <div className={`p-2 rounded-xl group-hover/act:bg-vibe-primary/10 transition-colors ${isLiked ? "bg-vibe-primary/5" : ""}`}>
+                                    <Heart size={19} className={isLiked ? "fill-current" : ""} />
+                                </div>
+                                <span className="text-xs font-black">{likes.length || 0}</span>
+                            </button>
+
+                            <button
+                                onClick={handleShare}
+                                className="flex items-center gap-2 text-zinc-500 hover:text-vibe-accent transition-all group/act"
+                            >
+                                <div className="p-2 rounded-xl group-hover/act:bg-vibe-accent/10 transition-colors">
+                                    <Share2 size={18} />
+                                </div>
+                            </button>
+
+                            <button className="flex items-center gap-2 text-zinc-500 hover:text-white transition-all group/act">
+                                <div className="p-2 rounded-xl group-hover/act:bg-white/5 transition-all">
+                                    <Bookmark size={18} />
+                                </div>
+                            </button>
+                        </div>
                     </div>
-                )}
-
-                {/* Footer Actions */}
-                <div className="flex items-center justify-between pt-2 border-t border-white/5 mt-2">
-                    <div className="flex items-center gap-6">
-                        <button
-                            onClick={handleLike}
-                            className={`flex items-center gap-2 group transition-colors ${isLiked ? "text-red-500" : "text-gray-400 hover:text-red-500"}`}
-                        >
-                            <Heart size={22} className={`transition-transform duration-200 ${isLiked ? "fill-current scale-110" : "group-hover:scale-110"}`} />
-                            <span className="text-sm font-medium">{likes.length > 0 ? likes.length : "Like"}</span>
-                        </button>
-
-                        <button
-                            onClick={() => setIsCommentsOpen(true)}
-                            className="flex items-center gap-2 group text-gray-400 hover:text-blue-400 transition-colors"
-                        >
-                            <MessageCircle size={22} className="group-hover:scale-110 transition-transform duration-200" />
-                            <span className="text-sm font-medium">{postData.comments?.length > 0 ? postData.comments.length : "Comment"}</span>
-                        </button>
-                    </div>
-
-                    <button onClick={() => handleShare(postData._id)} className="flex items-center gap-2 group text-gray-400 hover:text-green-400 transition-colors">
-                        <Share2 size={22} className="group-hover:scale-110 transition-transform duration-200" />
-                        <span className="text-sm font-medium">Share</span>
-                    </button>
                 </div>
             </div>
 
             <EditPostModal
                 isOpen={isEditOpen}
                 onClose={() => setIsEditOpen(false)}
-                post={postData}
-                onUpdate={setPostData}
+                post={post}
+                onUpdate={() => onUpdate && onUpdate()}
             />
-
-            <CommentsModal
-                isOpen={isCommentsOpen}
-                onClose={() => setIsCommentsOpen(false)}
-                postId={postData._id}
+            <ReportModal
+                isOpen={isReportOpen}
+                onClose={() => setIsReportOpen(false)}
+                postId={post._id}
             />
         </motion.div>
     );

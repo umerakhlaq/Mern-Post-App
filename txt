@@ -11,3 +11,8 @@ optional properties
 any, unknown, never types
 
 step:6
+
+
+
+router folder ke andar auth file hai us ke andar login signup or logout ki api rakhengy
+baqi files ko create karengy
